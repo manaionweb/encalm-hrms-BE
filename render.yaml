@@ -1,0 +1,27 @@
+services:
+  # 1. PostgreSQL Database
+  - type: postgres
+    name: encalm-hrms-db
+    plan: free # Change to starter/standard for production
+    version: 15
+
+  # 2. Node.js Backend API
+  - type: web
+    name: encalm-hrms-be
+    env: node
+    plan: free
+    region: singapore # Standard region, you can change if needed
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: encalm-hrms-db
+          property: connectionString
+      - key: PORT
+        value: "8000"
+      - key: JWT_SECRET
+        generateValue: true # Generates a random secure secret
+      - key: ENABLE_CORS
+        value: "true"
+      # Add any additional ENV variables your backend relies on here
