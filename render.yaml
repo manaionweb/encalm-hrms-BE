@@ -1,10 +1,11 @@
-services:
+databases:
   # 1. PostgreSQL Database
-  - type: postgres
-    name: encalm-hrms-db
+  - name: encalm-hrms-db
+    databaseName: encalm_hrms_db
+    user: encalm_user
     plan: free # Change to starter/standard for production
-    version: 15
 
+services:
   # 2. Node.js Backend API
   - type: web
     name: encalm-hrms-be
