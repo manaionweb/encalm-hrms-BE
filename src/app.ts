@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
+import notificationRoutes from "./routes/notification.routes";
 
 dotenv.config();
 
@@ -25,6 +26,6 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/employee', employeeRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/masters', mastersRoutes);
-
+app.use("/api/notifications", notificationRoutes);
 
 export { app, prisma };
