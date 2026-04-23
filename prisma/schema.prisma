@@ -48,6 +48,7 @@ model Tenant {
   roles            Role[]
   leaves           Leave[]
   employeeProfiles EmployeeProfile[]
+  attendanceRecords AttendanceRecord[]
   
   // Masters Relations
   companies        Company[]
@@ -104,6 +105,7 @@ model User {
   // Data
   leaves      Leave[]
   employeeProfile EmployeeProfile?
+  attendanceRecords AttendanceRecord[]
   
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -532,4 +534,20 @@ model ApprovalWorkflow {
   
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+model AttendanceRecord {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+
+  date      String   // YYYY-MM-DD
+  inTime    DateTime?
+  outTime   DateTime?
+  status    String   // Present, Absent, Late, Half Day, Weekend, Holiday
+  hours     Float?
+  
+  @@unique([userId, date])
 }
