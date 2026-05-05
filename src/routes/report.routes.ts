@@ -10,9 +10,9 @@ import {
   createLeave,
   createEmployeeProfile,
   createSalary,
-  createUser,
-  createTenant,
-  createLeaveType
+  // createUser,
+  // createTenant,
+  // createLeaveType
 } from "../controllers/report.controller";
 
 const router = Router();
@@ -44,9 +44,9 @@ router.post("/test/salary", createSalary);
 
 // ...................testing..................
 
-router.post("/test/tenant", createTenant);
-router.post("/test/leavetype", createLeaveType);
+// router.post("/test/tenant", createTenant);
+// router.post("/test/leavetype", createLeaveType);
 
-router.post("/test/user", createUser);
+// router.post("/test/user", createUser);
 
 export default router;

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getEmployee, updateEmployee, addDocument, deleteDocument, getAllEmployees, createEmployee, getCurrentEmployee } from '../controllers/employee.controller';
-import { authenticate } from '../middleware/auth'; // Assuming auth middleware exists
+import { authenticate } from '../middleware/auth.middleware'; // Assuming auth middleware exists
 
 const router = Router();
 

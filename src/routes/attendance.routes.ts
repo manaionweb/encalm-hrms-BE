@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getPunchStatus, punchToggle, getAttendanceHistory, getAttendanceStats } from '../controllers/attendance.controller';
-import { authenticate } from '../middleware/auth';
+import { authenticate } from '../middleware/auth.middleware';
 
 const router = Router();
 
