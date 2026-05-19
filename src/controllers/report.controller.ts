@@ -304,7 +304,7 @@ export const exportLeaveBalance = async (req: Request, res: Response) => {
   }
 };
 
-// ================= TEST CREATE APIs =================
+// ===========v====== TEST CREATE APIs =================
 export const createAttendance = async (req: Request, res: Response) => {
   try {
     const data = await prisma.attendanceRecord.create({ data: req.body });
