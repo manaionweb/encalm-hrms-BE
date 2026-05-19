@@ -3,9 +3,6 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-// In a real multi-tenant app, you'd extract tenantId from req.user
-// Assuming the user token middleware sets req.user
-
 export const getStats = async (req: Request, res: Response) => {
     try {
         const user = (req as any).user;
@@ -44,20 +41,27 @@ export const getStats = async (req: Request, res: Response) => {
             }
         });
 
-        // 4. Avg Attendance (Calculate from AttendanceRecord for the current month)
-        const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-        const attendanceCount = await prisma.attendanceRecord.count({
-            where: {
-                tenantId,
-                date: { gte: firstDayOfMonth.toISOString().split('T')[0] },
-                status: 'Present'
+        // ================= FIXED ATTENDANCE (SAME AS REPORTS) =================
+
+        const attendance = await prisma.attendanceRecord.findMany({
+            where: { tenantId }
+        });
+
+        let present = 0;
+
+        attendance.forEach(a => {
+            const status = String(a.status).toLowerCase();
+
+            if (status === "present" || status === "late") {
+                present++;
             }
         });
 
-        const totalExpectedDays = headcount * (today.getDate()); // Rough estimate: days passed * headcount
-        const avgAttendance = totalExpectedDays > 0 
-            ? Math.round((attendanceCount / totalExpectedDays) * 100) 
+        const avgAttendance = attendance.length
+            ? Math.round((present / attendance.length) * 100)
             : 0;
+
+        // ================= END FIX =================
 
         res.json({
             headcount,
@@ -65,6 +69,7 @@ export const getStats = async (req: Request, res: Response) => {
             newJoiners,
             avgAttendance: avgAttendance || 0
         });
+
     } catch (error) {
         console.error('Error fetching dashboard stats:', error);
         res.status(500).json({ message: 'Internal server error' });
@@ -73,7 +78,6 @@ export const getStats = async (req: Request, res: Response) => {
 
 export const getLiveAttendance = async (req: Request, res: Response) => {
     try {
-        // Mock data since no raw punches table exists in schema yet
         const data = [
             { name: '09:00', visitors: 40 },
             { name: '10:00', visitors: 120 },
@@ -84,7 +88,6 @@ export const getLiveAttendance = async (req: Request, res: Response) => {
             { name: '15:00', visitors: 140 },
         ];
         
-        // Simulating some dynamic variance
         const dynamicData = data.map(d => ({
             name: d.name,
             visitors: d.visitors + Math.floor(Math.random() * 20 - 10)
@@ -151,7 +154,7 @@ export const getEmployeeOverview = async (req: Request, res: Response) => {
         });
 
         const formatted = employees.map(emp => ({
-            id: emp.user.id, // Use userId instead of profileId
+            id: emp.user.id,
             name: emp.user.name,
             role: emp.title || 'Employee',
             status: emp.status

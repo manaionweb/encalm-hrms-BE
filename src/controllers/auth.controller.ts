@@ -75,6 +75,70 @@ import jwt  from "jsonwebtoken";
 
 const prisma = new PrismaClient();
 
+export const signup = async (req: Request, res: Response) => {
+  try {
+    const { name, email, password, tenantId } = req.body;
+
+    // 1. Validate
+    if (!name || !email || !password || !tenantId) {
+      return res.status(400).json({ message: "All fields required" });
+    }
+
+    // 2. Check existing user (same tenant)
+    const existingUser = await prisma.user.findFirst({
+      where: { email, tenantId }
+    });
+
+    if (existingUser) {
+      return res.status(400).json({ message: "User already exists" });
+    }
+
+    // 3. Hash password 
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // 4. Get default role
+    const role = await prisma.role.findFirst({
+      where: { name: "EMPLOYEE" }
+    });
+
+    if (!role) {
+      return res.status(500).json({ message: "Role not found" });
+    }
+
+    // 5. Create user
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        password: hashedPassword,
+        tenantId,
+        roleId: role.id
+      },
+      include: { role: true, tenant: true }
+    });
+
+    // 6. Response (no password)
+    res.json({
+      message: "Signup successful",
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        tenantId: user.tenantId,
+        role: user.role?.name || "EMPLOYEE"
+      }
+    });
+
+  } catch (error) {
+    console.error("Signup error:", error);
+    res.status(500).json({ message: "Signup error" });
+  }
+};
+
+
+
+// ================= LOGIN =================
+
 const createToken = (user: any) => {
      const secret = process.env.JWT_SECRET || "secret";
 

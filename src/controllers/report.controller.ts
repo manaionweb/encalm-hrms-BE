@@ -1,0 +1,346 @@
+
+
+import { Request, Response } from "express";
+import { PrismaClient } from "@prisma/client";
+
+// @ts-ignore
+import { Parser } from "json2csv";
+// @ts-ignore
+import PDFDocument from "pdfkit";
+import ExcelJS from "exceljs";
+
+const prisma = new PrismaClient();
+
+// helper..
+const getTenantId = (req: Request, res: Response) => {
+  const tenantId =
+  (req.headers["x-tenant-id"] as string) ||
+  (req.query.tenantId as string);
+  if (!tenantId) {
+    res.status(400).json({ message: "Tenant ID missing" });
+    return null;
+  }
+
+  return tenantId;
+};
+
+const calculateSalary = (salary: any): number => {
+  if (!salary) return 0;
+  return (salary.basic || 0) + (salary.hra || 0) + (salary.special || 0) + (salary.medical || 0);
+};
+
+
+
+
+
+
+// ================= DASHBOARD =================
+export const getDashboard = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req, res);
+    if (!tenantId) return;
+
+    const employees = await prisma.employeeProfile.findMany({
+      where: { tenantId },
+      include: { salary: true }
+    });
+
+    let totalPayroll = 0;
+    employees.forEach(emp => {
+      if (emp.salary) totalPayroll += calculateSalary(emp.salary);
+    });
+
+    // ✅ FIXED LOGIC START (MONTHLY + EMPLOYEE BASED)
+    const today = new Date();
+    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+
+    const attendance = await prisma.attendanceRecord.findMany({
+      where: {
+        tenantId,
+        date: {
+          gte: firstDayOfMonth.toISOString().split('T')[0],
+          lte: today.toISOString().split('T')[0]
+        }
+      }
+    });
+
+    // 👉 total employees
+    const totalEmployees = employees.length;
+
+    // 👉 unique employees who are present or late
+    const presentUsers = new Set<number>();
+
+    attendance.forEach(a => {
+      const status = String(a.status).toLowerCase();
+
+      if (status === "present" || status === "late") {
+        presentUsers.add(a.userId);
+      }
+    });
+
+    const avgAttendance = totalEmployees
+      ? Math.round((presentUsers.size / totalEmployees) * 100)
+      : 0;
+    // ✅ FIXED LOGIC END
+
+    const leaves = await prisma.leave.findMany({
+      where: { tenantId }
+    });
+
+    const pendingLeaves = leaves.filter(l =>
+      String(l.status).toLowerCase() === "pending"
+    ).length;
+
+    return res.json({
+      totalPayroll,
+      avgAttendance,
+      pendingLeaves,
+      payrollGrowth: "+5%",
+      attendanceTrend: "Stable",
+      leaveStatus: "Needs Attention"
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Dashboard error" });
+  }
+};
+
+// ================= ATTENDANCE =================
+export const getAttendance = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req, res);
+    if (!tenantId) return;
+
+    const records = await prisma.attendanceRecord.findMany({
+      where: { tenantId }
+    });
+
+    const map: any = {};
+
+    records.forEach(r => {
+      const day = new Date(r.date).toLocaleDateString("en-US", { weekday: "short" });
+
+      if (!map[day]) {
+        map[day] = { name: day, present: 0, absent: 0, late: 0 };
+      }
+
+      const status = (r.status || "").toUpperCase();
+
+      if (status === "PRESENT") map[day].present++;
+      else if (status === "ABSENT") map[day].absent++;
+      else if (status === "LATE") map[day].late++;
+    });
+
+    return res.json(Object.values(map));
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Attendance error" });
+  }
+};
+
+
+
+// ================= PAYROLL =================
+export const getPayroll = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req, res);
+    if (!tenantId) return;
+
+    const employees = await prisma.employeeProfile.findMany({
+      where: { tenantId },
+      include: { salary: true }
+    });
+
+    const deptMap: any = {};
+
+    employees.forEach(emp => {
+      const dept = emp.department || "Unknown";
+
+      if (!deptMap[dept]) deptMap[dept] = 0;
+
+      if (emp.salary) {
+        deptMap[dept] += calculateSalary(emp.salary);
+      }
+    });
+
+    const result = Object.entries(deptMap).map(([name, value]) => ({
+      name,
+      value
+    }));
+
+    return res.json(result);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Payroll error" });
+  }
+};
+
+
+
+// ================= CSV EXPORT =================
+export const exportMonthlyAttendance = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req, res);
+    if (!tenantId) return;
+
+    const data = await prisma.attendanceRecord.findMany({
+      where: { tenantId }
+    });
+
+    if (!data.length) return res.send("No attendance data");
+
+    const formatted = data.map(a => ({
+      userId: a.userId,
+      date: new Date(a.date).toLocaleDateString("en-GB"),
+      status: a.status,
+      hours: a.hours || 0
+    }));
+
+    const parser = new Parser({
+      fields: ["userId", "date", "status", "hours"]
+    });
+
+    const csv = parser.parse(formatted);
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=attendance.csv");
+
+    return res.send(csv);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("CSV export error");
+  }
+};
+
+
+
+// ================= PDF EXPORT =================
+export const exportSalaryRegister = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req, res);
+    if (!tenantId) return;
+
+    const employees = await prisma.employeeProfile.findMany({
+      where: { tenantId },
+      include: { user: true, salary: true }
+    });
+
+    const doc = new PDFDocument();
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", "attachment; filename=salary.pdf");
+
+    doc.pipe(res);
+
+    doc.fontSize(18).text("Salary Register", { align: "center" });
+    doc.moveDown();
+
+    employees.forEach(emp => {
+      const salary = calculateSalary(emp.salary);
+
+      doc.text(`Name: ${emp.user.name}`);
+      doc.text(`Department: ${emp.department}`);
+      doc.text(`Salary: ₹ ${salary}`);
+      doc.moveDown();
+    });
+
+    doc.end();
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "PDF export error" });
+  }
+};
+
+
+
+// ================= EXCEL EXPORT =================
+export const exportLeaveBalance = async (req: Request, res: Response) => {
+  try {
+    const tenantId = getTenantId(req, res);
+    if (!tenantId) return;
+
+    const leaves = await prisma.leave.findMany({
+      where: { tenantId },
+      include: { user: true }
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Leaves");
+
+    sheet.columns = [
+      { header: "Employee", key: "name", width: 20 },
+      { header: "Status", key: "status", width: 15 },
+      { header: "Start Date", key: "start", width: 20 },
+      { header: "End Date", key: "end", width: 20 }
+    ];
+
+    leaves.forEach(l => {
+      sheet.addRow({
+        name: l.user.name,
+        status: l.status,
+        start: l.startDate,
+        end: l.endDate
+      });
+    });
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+
+    res.setHeader("Content-Disposition", "attachment; filename=leave.xlsx");
+
+    await workbook.xlsx.write(res);
+    res.end();
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Excel export error" });
+  }
+};
+
+// ===========v====== TEST CREATE APIs =================
+export const createAttendance = async (req: Request, res: Response) => {
+  try {
+    const data = await prisma.attendanceRecord.create({ data: req.body });
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json(err);
+  }
+};
+
+export const createLeave = async (req: Request, res: Response) => {
+  try {
+    const data = await prisma.leave.create({ data: req.body });
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json(err);
+  }
+};
+
+export const createEmployeeProfile = async (req: Request, res: Response) => {
+  try {
+    const data = await prisma.employeeProfile.create({ data: req.body });
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json(err);
+  }
+};
+
+export const createSalary = async (req: Request, res: Response) => {
+  try {
+    const data = await prisma.salaryStructure.create({ data: req.body });
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json(err);
+  }
+};
