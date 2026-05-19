@@ -69,6 +69,9 @@ model Tenant {
   taxRegimeSelections    TaxRegimeSelection[]
   investmentDeclarations InvestmentDeclaration[]
   teams                  Team[]
+
+  // existing fields...
+  notifications Notification[]
 }
 
 model Role {
@@ -86,6 +89,26 @@ model Role {
   @@unique([name, tenantId])
 }
 
+model Notification {
+  id       String @id @default(uuid())
+  tenantId String
+  userId   Int
+
+  title   String
+  message String
+  type    String  @default("system")
+  unread  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId])
+  @@index([userId])
+}
+
 model User {
   id       Int     @id @default(autoincrement())
   email    String
@@ -101,6 +124,9 @@ model User {
   // Teams
   teamsManaged Team[]       @relation("TeamManager")
   teamMembers  TeamMember[]
+
+  // existing fields...
+  notifications Notification[]
 
   // Hierarchy
   managerId    Int?
@@ -186,9 +212,20 @@ model EmployeeProfile {
   user   User @relation(fields: [userId], references: [id])
 
   // Personal Info
-  title       String?
-  department  String?
-  location    String?
+  title      String?
+  department String?
+  location   String?
+
+  departmentId  String?
+  designationId String?
+  locationId    String?
+  shiftId       String?
+
+  departmentRef  Department?  @relation(fields: [departmentId], references: [id])
+  designationRef Designation? @relation(fields: [designationId], references: [id])
+  locationRef    Location?    @relation(fields: [locationId], references: [id])
+  shiftRef       Shift?       @relation(fields: [shiftId], references: [id])
+
   phone       String?
   dob         DateTime?
   joiningDate DateTime?
@@ -302,6 +339,8 @@ model Location {
   shopEstLicense String? // [NEW] Shop & Establishment License
   ptState        String? // Link to PT Slab
 
+  employees EmployeeProfile[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -316,6 +355,8 @@ model Department {
   name   String // e.g., "IT", "HR"
   headId Int? // HOD
 
+  employees EmployeeProfile[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -329,6 +370,8 @@ model Designation {
 
   title String // e.g., "Senior Developer"
   grade String? // Pay grade
+
+  employees EmployeeProfile[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -471,6 +514,8 @@ model Shift {
 
   // Night Shift Logic
   isNightShift Boolean @default(false) // If true, logic handles midnight crossing
+
+  employees EmployeeProfile[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -17,10 +17,17 @@ import attendanceRoutes from './routes/attendance.routes';
 import leaveRoutes from './routes/leave.routes';
 import reportsRoutes from "./routes/report.routes";
 import teamRoutes from './routes/team.routes';
-
-
+import notificationRoutes from './routes/notification.routes';
 app.use(cors());
 app.use(express.json());
+
+app.set('etag', false);
+
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+app.use('/api/notifications', notificationRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Backend is running' });
