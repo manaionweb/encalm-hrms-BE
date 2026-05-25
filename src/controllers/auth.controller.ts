@@ -72,6 +72,8 @@ import { Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import { sendForgotPasswordEmail } from "../utils/mailer";
 
 const prisma = new PrismaClient();
 
@@ -304,3 +306,39 @@ export const login = async (req: Request, res: Response) => {
   }
 };
 
+
+// ==============================
+// FORGOT PASSWORD
+// ==============================
+export const forgotPassword = async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: 'Email is required' });
+
+    const user = await prisma.user.findFirst({
+      where: { email: email.toLowerCase().trim() }
+    });
+
+    if (!user) {
+      // Don't reveal if email exists or not
+      return res.json({ message: 'If this email exists, a temporary password has been sent.' });
+    }
+
+    // Generate unique temp password — valid until user changes it
+    const tempPassword = crypto.randomBytes(5).toString('hex').toUpperCase() + '@1';
+
+    // Save as plain text (login handles both plain and hashed)
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { password: tempPassword }
+    });
+
+    // Send email
+    await sendForgotPasswordEmail(email, tempPassword);
+
+    return res.json({ message: 'If this email exists, a temporary password has been sent.' });
+  } catch (error: any) {
+    console.error('Forgot password error:', error);
+    return res.status(500).json({ message: 'Server error', details: error.message });
+  }
+};

@@ -34,3 +34,6 @@ coverage
 *.swp
 *.suo
 .DS_Store
+
+prisma/dev.db
+

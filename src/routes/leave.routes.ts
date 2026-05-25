@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getLeaveBalances, getLeaveHistory, applyLeave, updateLeaveStatus } from '../controllers/leave.controller';
-import { authenticate } from '../middleware/auth.middleware';
+import { authenticate } from '../middleware/auth';
 
 const router = Router();
 
