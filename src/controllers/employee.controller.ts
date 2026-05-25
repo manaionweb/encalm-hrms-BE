@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { createNotification, notifyAdmins } from '../utils/notification';
+import { sendWelcomeEmail } from '../utils/mailer';
+import crypto from 'crypto';
 
 const prisma = new PrismaClient();
 
@@ -224,6 +226,9 @@ export const createEmployee = async (req: Request, res: Response) => {
             targetRoleId = defaultRole?.id;
         }
 
+        // Generate unique temp password if not provided
+        const tempPassword = password || (crypto.randomBytes(5).toString('hex').toUpperCase() + '@1');
+
         const newUser = await prisma.$transaction(async (tx) => {
             // UPDATED: auto-create/find department and designation masters
             const finalDepartmentId = await getOrCreateDepartmentId(
@@ -245,7 +250,7 @@ export const createEmployee = async (req: Request, res: Response) => {
                 data: {
                     name,
                     email,
-                    password: password || 'Welcome@123', // Default password
+                    password: tempPassword, // Unique temp password
                     tenantId,
                     roleId: finalRoleId
                 }
@@ -316,6 +321,13 @@ export const createEmployee = async (req: Request, res: Response) => {
             message: `${name} has been added as ${title || role || 'Employee'}.`,
             type: 'employee',
         });
+
+        // Send welcome email with login credentials
+        try {
+            await sendWelcomeEmail(email, name, tempPassword);
+        } catch (mailErr) {
+            console.error('Welcome email failed (non-blocking):', mailErr);
+        }
 
         res.status(201).json(fullEmployee);
     } catch (error: any) {

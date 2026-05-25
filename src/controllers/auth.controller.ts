@@ -71,78 +71,14 @@
 import { Request, Response } from "express";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import jwt  from "jsonwebtoken";
+import jwt from "jsonwebtoken";
 
 const prisma = new PrismaClient();
 
-export const signup = async (req: Request, res: Response) => {
-  try {
-    const { name, email, password, tenantId } = req.body;
-
-    // 1. Validate
-    if (!name || !email || !password || !tenantId) {
-      return res.status(400).json({ message: "All fields required" });
-    }
-
-    // 2. Check existing user (same tenant)
-    const existingUser = await prisma.user.findFirst({
-      where: { email, tenantId }
-    });
-
-    if (existingUser) {
-      return res.status(400).json({ message: "User already exists" });
-    }
-
-    // 3. Hash password 
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // 4. Get default role
-    const role = await prisma.role.findFirst({
-      where: { name: "EMPLOYEE" }
-    });
-
-    if (!role) {
-      return res.status(500).json({ message: "Role not found" });
-    }
-
-    // 5. Create user
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-        tenantId,
-        roleId: role.id
-      },
-      include: { role: true, tenant: true }
-    });
-
-    // 6. Response (no password)
-    res.json({
-      message: "Signup successful",
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        tenantId: user.tenantId,
-        role: user.role?.name || "EMPLOYEE"
-      }
-    });
-
-  } catch (error) {
-    console.error("Signup error:", error);
-    res.status(500).json({ message: "Signup error" });
-  }
-};
-
-
-
-// ================= LOGIN =================
-
 const createToken = (user: any) => {
-     const secret = process.env.JWT_SECRET || "secret";
+  const secret = process.env.JWT_SECRET || "secret";
 
-  
+
   return jwt.sign(
     {
       id: user.id,
@@ -152,9 +88,10 @@ const createToken = (user: any) => {
       role: user.role?.name || "EMPLOYEE",
     },
     secret,
-    { expiresIn:  "24hrs",
-        
-     }
+    {
+      expiresIn: "24hrs",
+
+    }
   );
 };
 
@@ -244,13 +181,60 @@ export const register = async (req: Request, res: Response) => {
   }
 };
 
-
 export const login = async (req: Request, res: Response) => {
   try {
-    
     console.log("REQ BODY:", req.body);
+
     const { email, password } = req.body;
 
+    // ==============================
+    // TEMPORARY DUMMY LOGIN
+    // ==============================
+    if (
+      email === "admin@example.com" &&
+      password === "password123"
+    ) {
+      const dummyToken = jwt.sign(
+  {
+    id: 1,
+    email: "admin@example.com",
+    role: "HR_ADMIN",
+    tenantId: "1e3be177-ffd4-4ea7-86b5-eb50f1b9d0f5",
+  },
+  process.env.JWT_SECRET || "secret",
+  { expiresIn: "24h" }
+);
+      return res.json({
+        message: "Dummy login successful",
+        token: dummyToken,
+
+        user: {
+          id: 1,
+          name: "System Admin",
+          email: "admin@example.com",
+          role: "HR_ADMIN",
+          tenantId: "1e3be177-ffd4-4ea7-86b5-eb50f1b9d0f5",
+          tenantName: "EnCalm HRX",
+
+          accessibleModules: [
+            "DASHBOARD",
+            "ATTENDANCE",
+            "EMPLOYEE",
+            "EMPLOYEE_ATTENDANCE",
+            "TEAM",
+            "LEAVE",
+            "REPORTS",
+            "MASTERS",
+            "TASK",
+            "MY_PROFILE"
+          ],
+        },
+      });
+    }
+
+    // ==============================
+    // REAL DATABASE LOGIN
+    // ==============================
     if (!email || !password) {
       return res.status(400).json({
         message: "Email and password are required",
@@ -261,14 +245,16 @@ export const login = async (req: Request, res: Response) => {
       where: {
         email: email.toLowerCase().trim(),
       },
+
       include: {
         role: true,
         tenant: true,
       },
     });
+
     console.log("LOGIN EMAIL:", email);
-console.log("USER FOUND:", user);
-console.log("DB PASSWORD:", user?.password);
+    console.log("USER FOUND:", user);
+    console.log("DB PASSWORD:", user?.password);
 
     if (!user || !user.password) {
       return res.status(401).json({
@@ -276,10 +262,11 @@ console.log("DB PASSWORD:", user?.password);
       });
     }
 
-   const isPasswordValid =
-  user.password.startsWith("$2a$") || user.password.startsWith("$2b$")
-    ? await bcrypt.compare(password, user.password)
-    : password === user.password;
+    const isPasswordValid =
+      user.password.startsWith("$2a$") ||
+        user.password.startsWith("$2b$")
+        ? await bcrypt.compare(password, user.password)
+        : password === user.password;
 
     if (!isPasswordValid) {
       return res.status(401).json({
@@ -292,6 +279,7 @@ console.log("DB PASSWORD:", user?.password);
     return res.json({
       message: "Login successful",
       token,
+
       user: {
         id: user.id,
         name: user.name,
@@ -299,16 +287,20 @@ console.log("DB PASSWORD:", user?.password);
         role: user.role?.name || "EMPLOYEE",
         tenantId: user.tenantId,
         tenantName: user.tenant?.name,
+
         accessibleModules: user.role?.accessibleModules
           ? user.role.accessibleModules.split(",")
           : [],
       },
     });
+
   } catch (error: any) {
     console.error("Login error:", error);
+
     return res.status(500).json({
       message: "Server error",
       details: error.message,
     });
   }
 };
+

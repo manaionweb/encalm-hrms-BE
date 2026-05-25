@@ -41,27 +41,39 @@ export const getStats = async (req: Request, res: Response) => {
             }
         });
 
-        // ================= FIXED ATTENDANCE (SAME AS REPORTS) =================
+        // ================= AVG ATTENDANCE (current month, capped at 100) =================
 
-        const attendance = await prisma.attendanceRecord.findMany({
-            where: { tenantId }
-        });
+        const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+        const firstDayStr = firstDay.toISOString().split('T')[0];
+        const todayStr = today.toISOString().split('T')[0];
 
-        let present = 0;
-
-        attendance.forEach(a => {
-            const status = String(a.status).toLowerCase();
-
-            if (status === "present" || status === "late") {
-                present++;
+        const monthAttendance = await prisma.attendanceRecord.findMany({
+            where: {
+                tenantId,
+                date: { gte: firstDayStr, lte: todayStr }
             }
         });
 
-        const avgAttendance = attendance.length
-            ? Math.round((present / attendance.length) * 100)
+        // Count working days elapsed this month (Mon-Fri only)
+        let workingDaysElapsed = 0;
+        const cursor = new Date(firstDay);
+        while (cursor <= today) {
+            const dow = cursor.getDay();
+            if (dow !== 0 && dow !== 6) workingDaysElapsed++;
+            cursor.setDate(cursor.getDate() + 1);
+        }
+
+        const totalExpected = workingDaysElapsed * headcount;
+        const presentCount = monthAttendance.filter(a => {
+            const s = String(a.status).toLowerCase();
+            return s === 'present' || s === 'late';
+        }).length;
+
+        const avgAttendance = totalExpected > 0
+            ? Math.min(100, Math.round((presentCount / totalExpected) * 100))
             : 0;
 
-        // ================= END FIX =================
+        // ================= END =================
 
         res.json({
             headcount,

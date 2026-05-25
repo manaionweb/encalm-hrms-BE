@@ -1,188 +1,472 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { notifyAdmins,createNotification} from '../utils/notification';
+import { notifyAdmins, createNotification } from '../utils/notification';
 
 const prisma = new PrismaClient();
 
-// Get leave balances for the authenticated user
-export const getLeaveBalances = async (req: Request, res: Response) => {
+// ======================================================
+// HELPER FUNCTION
+// CALCULATE LEAVE DAYS
+// ======================================================
+
+const calculateLeaveDays = async ({
+    startDate,
+    endDate,
+    tenantId,
+    sandwichRule
+}: {
+    startDate: Date;
+    endDate: Date;
+    tenantId: string;
+    sandwichRule: boolean;
+}) => {
+
+    let leaveDays = 0;
+
+    // Clone start date
+    const currentDate = new Date(startDate);
+
+    // Fetch holidays between dates
+    const holidays = await prisma.holiday.findMany({
+        where: {
+            tenantId,
+            date: {
+                gte: startDate,
+                lte: endDate
+            }
+        }
+    });
+
+    // Convert holidays into lookup set
+    const holidaySet = new Set(
+        holidays.map(h =>
+            new Date(h.date).toISOString().split('T')[0]
+        )
+    );
+
+    // Iterate all dates
+    while (currentDate <= endDate) {
+
+        const day = currentDate.getDay();
+
+        const formattedDate =
+            currentDate.toISOString().split('T')[0];
+
+        const isWeekend =
+            day === 0 || day === 6;
+
+        const isHoliday =
+            holidaySet.has(formattedDate);
+
+        // Sandwich Rule Enabled
+        if (sandwichRule) {
+
+            leaveDays++;
+
+        }
+
+        // Normal Leave Logic
+        else {
+
+            // Count only working days
+            if (!isWeekend && !isHoliday) {
+                leaveDays++;
+            }
+        }
+
+        // Move next day
+        currentDate.setDate(
+            currentDate.getDate() + 1
+        );
+    }
+
+    return leaveDays;
+};
+
+// ======================================================
+// GET LEAVE BALANCES
+// ======================================================
+
+export const getLeaveBalances = async (
+    req: Request,
+    res: Response
+) => {
+
     try {
+
         const userId = (req as any).user?.id;
+
         const tenantId = (req as any).user?.tenantId;
 
-        if (!userId || !tenantId) return res.status(401).json({ message: 'Unauthorized' });
+        if (!userId || !tenantId) {
+            return res.status(401).json({
+                message: 'Unauthorized'
+            });
+        }
 
-        // Fetch all leave types for the tenant
-        const leaveTypes = await prisma.leaveType.findMany({
-  where: {
-    tenantId,
-    code: {
-      in: ['CL', 'SL', 'EL']
-    }
-  },
-  distinct: ['code']
-});
+        // Fetch leave types
+        const leaveTypes =
+            await prisma.leaveType.findMany({
+                where: {
+                    tenantId,
+                    code: {
+                        in: ['CL', 'SL', 'EL']
+                    }
+                },
+                distinct: ['code']
+            });
 
-        // Fetch approved leaves for the user to calculate taken days (FOR CURRENT YEAR ONLY)
-        const currentYear = new Date().getFullYear();
-        const startOfYear = new Date(currentYear, 0, 1);
-        const endOfYear = new Date(currentYear, 11, 31);
+        // Current year
+        const currentYear =
+            new Date().getFullYear();
 
-        const approvedLeaves = await prisma.leave.findMany({
-            where: {
-                userId,
-                status: 'APPROVED',
-                startDate: {
-                    gte: startOfYear,
-                    lte: endOfYear
+        const startOfYear =
+            new Date(currentYear, 0, 1);
+
+        const endOfYear =
+            new Date(currentYear, 11, 31);
+
+        // Approved leaves
+        const approvedLeaves =
+            await prisma.leave.findMany({
+                where: {
+                    userId,
+                    status: 'APPROVED',
+                    startDate: {
+                        gte: startOfYear,
+                        lte: endOfYear
+                    }
                 }
-            }
-        });
+            });
 
-        const balances = leaveTypes.map(type => {
-            const taken = approvedLeaves
-                .filter(l => l.leaveTypeId === type.id)
-                .reduce((acc, curr) => {
-                    const days = Math.ceil((curr.endDate.getTime() - curr.startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-                    return acc + days;
-                }, 0);
+        // Calculate balances
+        const balances = await Promise.all(
 
-            return {
-                id: type.id,
-                name: type.name,
-                code: type.code,
-                total: type.daysPerYear,
-                taken,
-                balance: type.daysPerYear - taken
-            };
-        });
+            leaveTypes.map(async (type) => {
+
+                const filteredLeaves =
+                    approvedLeaves.filter(
+                        l => l.leaveTypeId === type.id
+                    );
+
+                let taken = 0;
+
+                for (const leave of filteredLeaves) {
+
+                    const leaveDays =
+                        await calculateLeaveDays({
+                            startDate: leave.startDate,
+                            endDate: leave.endDate,
+                            tenantId,
+                            sandwichRule:
+                                type.sandwichRule
+                        });
+
+                    taken += leaveDays;
+                }
+
+                return {
+                    id: type.id,
+                    name: type.name,
+                    code: type.code,
+                    total: type.daysPerYear,
+                    taken,
+                    balance:
+                        type.daysPerYear - taken
+                };
+            })
+
+        );
 
         res.json(balances);
+
     } catch (error) {
-        console.error('Error fetching leave balances:', error);
-        res.status(500).json({ message: 'Server error' });
+
+        console.error(
+            'Error fetching leave balances:',
+            error
+        );
+
+        res.status(500).json({
+            message: 'Server error'
+        });
     }
 };
 
+// ======================================================
+// GET LEAVE HISTORY
+// ======================================================
 
+export const getLeaveHistory = async (
+    req: Request,
+    res: Response
+) => {
 
-// Get leave history for the authenticated user
-export const getLeaveHistory = async (req: Request, res: Response) => {
     try {
+
         const userId = (req as any).user?.id;
-        const tenantId = (req as any).user?.tenantId;
-        const userRole = (req as any).user?.role;
+
+        const tenantId =
+            (req as any).user?.tenantId;
+
+        const userRole =
+            (req as any).user?.role;
+
         const { all } = req.query;
 
-        if (!userId || !tenantId) return res.status(401).json({ message: 'Unauthorized' });
+        if (!userId || !tenantId) {
+            return res.status(401).json({
+                message: 'Unauthorized'
+            });
+        }
 
-        // If HR_ADMIN and all=true, return all leaves for the tenant
-        const whereClause = (userRole === 'HR_ADMIN' && all === 'true') 
-            ? { tenantId } 
-            : { userId, tenantId };
+        // HR_ADMIN can view all leaves
+        const whereClause =
+            (userRole === 'HR_ADMIN'
+                && all === 'true')
 
-        const leaves = await prisma.leave.findMany({
-            where: whereClause,
-            include: {
-                leaveType: true,
-                user: {
-                    select: { name: true }
+                ? { tenantId }
+
+                : { userId, tenantId };
+
+        const leaves =
+            await prisma.leave.findMany({
+                where: whereClause,
+
+                include: {
+                    leaveType: true,
+
+                    user: {
+                        select: {
+                            name: true
+                        }
+                    }
+                },
+
+                orderBy: {
+                    createdAt: 'desc'
                 }
-            },
-            orderBy: { createdAt: 'desc' }
-        });
+            });
 
         res.json(leaves);
+
     } catch (error) {
-        console.error('Error fetching leave history:', error);
-        res.status(500).json({ message: 'Server error' });
+
+        console.error(
+            'Error fetching leave history:',
+            error
+        );
+
+        res.status(500).json({
+            message: 'Server error'
+        });
     }
 };
 
-// Apply for leave
-export const applyLeave = async (req: Request, res: Response) => {
+// ======================================================
+// APPLY LEAVE
+// ======================================================
+
+export const applyLeave = async (
+    req: Request,
+    res: Response
+) => {
+
     try {
+
         const userId = (req as any).user?.id;
-        const tenantId = (req as any).user?.tenantId;
 
-        if (!userId || !tenantId) return res.status(401).json({ message: 'Unauthorized' });
+        const tenantId =
+            (req as any).user?.tenantId;
 
-        const { leaveTypeCode, startDate, endDate, reason } = req.body;
-
-        if (!leaveTypeCode || !startDate || !endDate || !reason) {
-            return res.status(400).json({ message: 'All fields are required' });
+        if (!userId || !tenantId) {
+            return res.status(401).json({
+                message: 'Unauthorized'
+            });
         }
 
-        // Find the leave type ID
-        const leaveType = await prisma.leaveType.findFirst({
-            where: { code: leaveTypeCode, tenantId }
-        });
+        const {
+            leaveTypeCode,
+            startDate,
+            endDate,
+            reason
+        } = req.body;
+
+        if (
+            !leaveTypeCode ||
+            !startDate ||
+            !endDate ||
+            !reason
+        ) {
+
+            return res.status(400).json({
+                message: 'All fields are required'
+            });
+        }
+
+        // Find leave type
+        const leaveType =
+            await prisma.leaveType.findFirst({
+                where: {
+                    code: leaveTypeCode,
+                    tenantId
+                }
+            });
 
         if (!leaveType) {
-            return res.status(404).json({ message: 'Leave type not found' });
+            return res.status(404).json({
+                message: 'Leave type not found'
+            });
         }
 
-        const newLeave = await prisma.leave.create({
-            data: {
-                userId,
-                tenantId,
-                leaveTypeId: leaveType.id,
+        // Calculate leave days
+        const calculatedLeaveDays =
+            await calculateLeaveDays({
                 startDate: new Date(startDate),
                 endDate: new Date(endDate),
-                reason,
-                status: 'PENDING'
-            }
-        });
-        const employee = await prisma.user.findFirst({
-            where: { id: userId, tenantId },
-            select: { name: true },
-        });
+                tenantId,
+                sandwichRule:
+                    leaveType.sandwichRule
+            });
 
+        console.log(
+            "Calculated Leave Days:",
+            calculatedLeaveDays
+        );
+
+        // Create leave request
+        const newLeave =
+            await prisma.leave.create({
+                data: {
+                    userId,
+                    tenantId,
+                    leaveTypeId: leaveType.id,
+
+                    startDate:
+                        new Date(startDate),
+
+                    endDate:
+                        new Date(endDate),
+
+                    reason,
+
+                    status: 'PENDING'
+                }
+            });
+
+        // Employee details
+        const employee =
+            await prisma.user.findFirst({
+                where: {
+                    id: userId,
+                    tenantId
+                },
+
+                select: {
+                    name: true
+                }
+            });
+
+        // Notify admins
         await notifyAdmins({
             tenantId,
+
             title: 'New Leave Request',
-            message: `${employee?.name || 'Employee'} requested ${leaveType.name} from ${startDate} to ${endDate}.`,
+
+            message:
+                `${employee?.name || 'Employee'} requested ${leaveType.name} from ${startDate} to ${endDate}.`,
+
             type: 'leave',
         });
 
         res.status(201).json(newLeave);
+
     } catch (error) {
-        console.error('Error applying for leave:', error);
-        res.status(500).json({ message: 'Server error' });
+
+        console.error(
+            'Error applying for leave:',
+            error
+        );
+
+        res.status(500).json({
+            message: 'Server error'
+        });
     }
 };
 
-// Update leave status (Admin/Manager)
-export const updateLeaveStatus = async (req: Request, res: Response) => {
+// ======================================================
+// UPDATE LEAVE STATUS
+// ======================================================
+
+export const updateLeaveStatus = async (
+    req: Request,
+    res: Response
+) => {
+
     try {
+
         const { id } = req.params;
+
         const { status } = req.body;
-        const tenantId = (req as any).user?.tenantId;
 
-        if (!tenantId) return res.status(401).json({ message: 'Unauthorized' });
+        const tenantId =
+            (req as any).user?.tenantId;
 
-        const updatedLeave = await prisma.leave.update({
-            where: { id: Number(id), tenantId },
-            data: { status },
-             include: {
-        leaveType: true,
-        user: {
-          select: { id: true, name: true },
-        },
-      },
+        if (!tenantId) {
+            return res.status(401).json({
+                message: 'Unauthorized'
+            });
+        }
 
+        const updatedLeave =
+            await prisma.leave.update({
+
+                where: {
+                    id: Number(id),
+                    tenantId
+                },
+
+                data: {
+                    status
+                },
+
+                include: {
+                    leaveType: true,
+
+                    user: {
+                        select: {
+                            id: true,
+                            name: true
+                        }
+                    }
+                }
+            });
+
+        // Notify employee
+        await createNotification({
+            tenantId,
+
+            userId: updatedLeave.userId,
+
+            title: 'Leave Status Updated',
+
+            message:
+                `Your ${updatedLeave.leaveType?.name || 'leave'} request has been ${status}.`,
+
+            type: 'leave',
         });
-         await createNotification({
-      tenantId,
-      userId: updatedLeave.userId,
-      title: 'Leave Status Updated',
-      message: `Your ${updatedLeave.leaveType?.name || 'leave'} request has been ${status}.`,
-      type: 'leave',
-    });
 
         res.json(updatedLeave);
+
     } catch (error) {
-        console.error('Error updating leave status:', error);
-        res.status(500).json({ message: 'Server error' });
+
+        console.error(
+            'Error updating leave status:',
+            error
+        );
+
+        res.status(500).json({
+            message: 'Server error'
+        });
     }
 };

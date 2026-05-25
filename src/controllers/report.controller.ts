@@ -50,38 +50,39 @@ export const getDashboard = async (req: Request, res: Response) => {
       if (emp.salary) totalPayroll += calculateSalary(emp.salary);
     });
 
-    // ✅ FIXED LOGIC START (MONTHLY + EMPLOYEE BASED)
+    // ✅ AVG ATTENDANCE — working days based, capped at 100
     const today = new Date();
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const firstDayStr = firstDayOfMonth.toISOString().split('T')[0];
+    const todayStr = today.toISOString().split('T')[0];
 
     const attendance = await prisma.attendanceRecord.findMany({
       where: {
         tenantId,
-        date: {
-          gte: firstDayOfMonth.toISOString().split('T')[0],
-          lte: today.toISOString().split('T')[0]
-        }
+        date: { gte: firstDayStr, lte: todayStr }
       }
     });
 
-    // 👉 total employees
     const totalEmployees = employees.length;
 
-    // 👉 unique employees who are present or late
-    const presentUsers = new Set<number>();
+    // Count working days elapsed this month (Mon-Fri)
+    let workingDaysElapsed = 0;
+    const cursor = new Date(firstDayOfMonth);
+    while (cursor <= today) {
+      const dow = cursor.getDay();
+      if (dow !== 0 && dow !== 6) workingDaysElapsed++;
+      cursor.setDate(cursor.getDate() + 1);
+    }
 
-    attendance.forEach(a => {
-      const status = String(a.status).toLowerCase();
+    const totalExpected = workingDaysElapsed * totalEmployees;
+    const presentCount = attendance.filter(a => {
+      const s = String(a.status).toLowerCase();
+      return s === 'present' || s === 'late';
+    }).length;
 
-      if (status === "present" || status === "late") {
-        presentUsers.add(a.userId);
-      }
-    });
-
-    const avgAttendance = totalEmployees
-      ? Math.round((presentUsers.size / totalEmployees) * 100)
+    const avgAttendance = totalExpected > 0
+      ? Math.min(100, Math.round((presentCount / totalExpected) * 100))
       : 0;
-    // ✅ FIXED LOGIC END
 
     const leaves = await prisma.leave.findMany({
       where: { tenantId }
