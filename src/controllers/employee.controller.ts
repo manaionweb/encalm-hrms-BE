@@ -552,7 +552,7 @@ const profilePhotoPath = profilePhotoFile
 
             await sendMail({
                 to: email,
-                subject: "Welcome to EnCalm HRMS - Your Account is Ready",
+                subject: "Welcome to OmniHR - Your Account is Ready",
                 html: emailContent.html,
                 text: emailContent.text,
             });
