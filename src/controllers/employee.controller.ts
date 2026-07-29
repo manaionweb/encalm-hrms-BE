@@ -304,7 +304,7 @@ export const createEmployee = async (req: Request, res: Response) => {
         const uploadedFiles = req.files as Express.Multer.File[] | undefined;
 
 const profilePhotoFile = uploadedFiles?.find(
-    (file) => file.fieldname === "profilePhoto"
+    (file) => file.fieldname === "profilePicture"
 );
 
 const profilePhotoPath = profilePhotoFile
