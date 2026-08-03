@@ -1,15 +1,55 @@
 import { Router } from 'express';
-import { getEmployee, updateEmployee, addDocument, deleteDocument, getAllEmployees, createEmployee, getCurrentEmployee } from '../controllers/employee.controller';
-import { authenticate } from '../middleware/auth'; // Assuming auth middleware exists
+import { 
+  getEmployee, 
+  updateEmployee, 
+  addDocument, 
+  deleteDocument, 
+  getAllEmployees, 
+  createEmployee, 
+  getCurrentEmployee, 
+  deleteEmployee,
+  updateProfilePicture,
+  deleteProfilePicture
+} from '../controllers/employee.controller';
+import { authenticate, authorize } from '../middleware/auth'; // Assuming auth middleware exists
+import { upload } from '../middleware/upload';
+
 
 const router = Router();
 
 router.get('/', authenticate, getAllEmployees);
-router.post('/', authenticate, createEmployee);
+router.post('/', authenticate, upload.any(), createEmployee);
+
 router.get('/me', authenticate, getCurrentEmployee);
+router.put('/me', authenticate, updateEmployee);
+
+// Profile Picture Routes
+router.put('/me/profile-picture', authenticate, upload.single('profilePicture'), updateProfilePicture);
+router.delete('/me/profile-picture', authenticate, deleteProfilePicture);
+
+router.put('/:id/profile-picture', authenticate, upload.single('profilePicture'), updateProfilePicture);
+router.delete('/:id/profile-picture', authenticate, deleteProfilePicture);
+
+
+// UPDATED: HR_ADMIN and SYSTEM_ADMIN can upload employee documents
+router.post(
+  "/:id/documents",
+  authenticate,
+  authorize(["HR_ADMIN", "SYSTEM_ADMIN"]),
+  upload.single("file"),
+  addDocument
+);
+
+// UPDATED: HR_ADMIN and SYSTEM_ADMIN can delete employee documents
+router.delete(
+  "/:id/documents/:docId",
+  authenticate,
+  authorize(["HR_ADMIN", "SYSTEM_ADMIN"]),
+  deleteDocument
+);
+
+
 router.get('/:id', authenticate, getEmployee);
 router.put('/:id', authenticate, updateEmployee);
-router.post('/:id/documents', authenticate, addDocument);
-router.delete('/:id/documents/:docId', authenticate, deleteDocument);
-
+router.delete('/:id', authenticate, deleteEmployee);
 export default router;
