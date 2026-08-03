@@ -5,6 +5,9 @@ import { getManagerTeamMemberIds } from "../utils/teamScope";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { sendMail, employeeWelcomeTemplate } from "../utils/mail";
+import { createAuditLog } from "../utils/auditLog";
+import fs from 'fs';
+import path from 'path';
 
 
 const prisma = new PrismaClient();
@@ -84,6 +87,11 @@ const employeeInclude = {
             bank: true,
             documents: true,
             salary: true,
+            salaryComponents: {
+                include: {
+                    component: true,
+                },
+            },
             departmentRef: true,
             designationRef: true,
 
@@ -293,6 +301,15 @@ export const createEmployee = async (req: Request, res: Response) => {
         if (!tenantId) return res.status(401).json({ message: 'Unauthorized' });
 
         const data = typeof req.body.data === 'string' ? JSON.parse(req.body.data) : req.body;
+        const uploadedFiles = req.files as Express.Multer.File[] | undefined;
+
+const profilePhotoFile = uploadedFiles?.find(
+    (file) => file.fieldname === "profilePicture"
+);
+
+const profilePhotoPath = profilePhotoFile
+    ? `/uploads/${profilePhotoFile.filename}`
+    : null;
 
         const {
             name, email, password, phone, role, roleId,
@@ -303,6 +320,7 @@ export const createEmployee = async (req: Request, res: Response) => {
             uan, pfNumber, esic, pan, aadhaar,
             bankName, accountNumber, ifsc,
             salary,
+            customFieldValues = {},
         } = data;
 
         // Basic validation
@@ -401,6 +419,7 @@ export const createEmployee = async (req: Request, res: Response) => {
                     dob: dob ? new Date(dob) : null,
                     address: address || null,
                     bloodGroup: bloodGroup || null,
+                    avatar: profilePhotoPath,
 
                     isActive: true, // ✅ ADDED
                     deletedAt: null,
@@ -435,8 +454,51 @@ export const createEmployee = async (req: Request, res: Response) => {
             });
 
 
-            const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-            if (files) {
+            // Parse flat req.files array into a fieldname mapping
+            const filesArray = req.files as Express.Multer.File[] | undefined;
+            const files: { [fieldname: string]: Express.Multer.File[] } = {};
+            if (filesArray) {
+                filesArray.forEach(file => {
+                    if (!files[file.fieldname]) {
+                        files[file.fieldname] = [];
+                    }
+                    files[file.fieldname].push(file);
+                });
+            }
+
+            // Create custom field assignments for all active custom fields for the tenant
+            const cfMasters = await tx.customField.findMany({
+                where: { tenantId }
+            });
+
+            if (cfMasters.length > 0) {
+                const customFieldsMap: Record<string, any> = {};
+                cfMasters.forEach((cf) => {
+                    const value = customFieldValues[cf.id] !== undefined ? String(customFieldValues[cf.id]) : null;
+                    
+                    // Check if there is an uploaded file for this custom field
+                    const fileArr = files[`custom-file-${cf.id}`];
+                    const file = fileArr && fileArr[0];
+                    const docUrl = file ? file.filename : null;
+                    const docName = file ? file.originalname : null;
+
+                    customFieldsMap[cf.id] = {
+                        value,
+                        documentUrl: docUrl,
+                        documentName: docName
+                    };
+                });
+
+                await tx.employeeProfile.update({
+                    where: { id: profile.id },
+                    data: {
+                        customFields: JSON.stringify(customFieldsMap)
+                    }
+                });
+            }
+
+            // Save standard documents
+            if (filesArray && filesArray.length > 0) {
                 const docPromises = [];
                 for (const fieldName of ['aadhaar', 'pan', 'degree']) {
                     const fileArr = files[fieldName];
@@ -490,13 +552,26 @@ export const createEmployee = async (req: Request, res: Response) => {
 
             await sendMail({
                 to: email,
-                subject: "Welcome to EnCalm HRMS - Your Account is Ready",
+                subject: "Welcome to OmniHR - Your Account is Ready",
                 html: emailContent.html,
                 text: emailContent.text,
             });
         } catch (mailError) {
             console.log("Employee created but email failed:", mailError);
         }
+
+        await createAuditLog({
+            tenantId,
+            module: "Employee",
+            action: "Created",
+            description: `New employee ${name} was created.`,
+            performedById: (req as any).user?.id,
+            performedBy: (req as any).user?.name || "Admin",
+            performedByRole: (req as any).user?.role,
+            targetUserId: newUser.id,
+            targetUser: name,
+            targetUserRole: "EMPLOYEE",
+        });
 
         res.status(201).json(fullEmployee);
     } catch (error: any) {
@@ -524,8 +599,13 @@ export const getEmployee = async (req: Request, res: Response) => {
                         statutory: true,
                         bank: true,
                         documents: true,
-                        salary: true
-                    }
+                        salary: true,
+                        salaryComponents: {
+                            include: {
+                                component: true,
+                            },
+                        },
+                    },
                 },
                 role: true,
                 manager: {
@@ -863,6 +943,19 @@ export const updateEmployee = async (req: Request, res: Response) => {
             type: "employee",
         });
 
+        await createAuditLog({
+            tenantId,
+            module: "Employee",
+            action: "Updated",
+            description: `${existingEmployee.name}'s profile was updated.`,
+            performedById: loggedInUser?.id,
+            performedBy: loggedInUser?.name || "Admin",
+            performedByRole: loggedInUser?.role,
+            targetUserId: userId,
+            targetUser: name || existingEmployee.name,
+            targetUserRole: role || "EMPLOYEE",
+        });
+
         return res.json(updatedProfile);
     } catch (error: any) {
         console.error("Update employee error:", error);
@@ -993,6 +1086,7 @@ export const deleteEmployee = async (req: Request, res: Response) => {
             },
             include: {
                 employeeProfile: true,
+                role: true,
             },
         });
 
@@ -1039,6 +1133,23 @@ export const deleteEmployee = async (req: Request, res: Response) => {
                 },
             });
         });
+
+        await createAuditLog({
+    tenantId,
+    module: "Employee",
+    action: "Deleted",
+
+    // ✅ FIXED: variable name is employee, not existingEmployee
+    description: `${employee.name} was deleted/inactivated.`,
+
+    performedById: (req as any).user?.id,
+    performedBy: (req as any).user?.name || (req as any).user?.email || "Admin",
+    performedByRole: (req as any).user?.role,
+
+    targetUserId: userId,
+    targetUser: employee.name,
+    targetUserRole: employee.role?.name || "EMPLOYEE",
+});
 
         res.json({ message: 'Employee and all associated records deleted successfully' });
     } catch (error) {
@@ -1106,8 +1217,13 @@ export const getCurrentEmployee = async (req: Request, res: Response) => {
                         statutory: true,
                         bank: true,
                         documents: true,
-                        salary: true
-                    }
+                        salary: true,
+                        salaryComponents: {
+                            include: {
+                                component: true,
+                            },
+                        },
+                    },
                 },
                 role: true,
                 manager: {
@@ -1139,5 +1255,135 @@ export const getCurrentEmployee = async (req: Request, res: Response) => {
     } catch (error) {
         console.error('Error fetching current employee:', error);
         res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// Update profile picture for employee (self or by id)
+export const updateProfilePicture = async (req: Request, res: Response) => {
+    try {
+        const loggedInUser = (req as any).user;
+        const { id } = req.params;
+
+        const userId =
+            req.path.includes('/me') || !id
+                ? Number(loggedInUser?.id)
+                : Number(id);
+
+        if (!userId || Number.isNaN(userId)) {
+            return res.status(400).json({ message: "Invalid employee id" });
+        }
+
+        const tenantId = loggedInUser?.tenantId;
+        if (!tenantId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        const file = req.file;
+        if (!file) {
+            return res.status(400).json({ message: "Profile picture file is required" });
+        }
+
+        // Find existing employee profile
+        const profile = await prisma.employeeProfile.findFirst({
+            where: {
+                userId,
+                tenantId,
+                isActive: true,
+                deletedAt: null,
+            }
+        });
+
+        if (!profile) {
+            return res.status(404).json({ message: "Employee profile not found" });
+        }
+
+        // Delete old profile picture if it exists on disk and is a file path
+        if (profile.avatar && profile.avatar.startsWith('/uploads/')) {
+            const oldFilePath = path.join(process.cwd(), profile.avatar);
+            if (fs.existsSync(oldFilePath)) {
+                try {
+                    fs.unlinkSync(oldFilePath);
+                } catch (err) {
+                    console.error("Failed to delete old avatar file:", err);
+                }
+            }
+        }
+
+        // Save new profile picture path
+        const profilePhotoPath = `/uploads/${file.filename}`;
+
+        const updatedProfile = await prisma.employeeProfile.update({
+            where: { id: profile.id },
+            data: { avatar: profilePhotoPath }
+        });
+
+        return res.json(updatedProfile);
+    } catch (error: any) {
+        console.error("Update profile picture error:", error);
+        return res.status(500).json({
+            message: "Server error",
+            error: error.message
+        });
+    }
+};
+
+// Delete profile picture for employee (self or by id)
+export const deleteProfilePicture = async (req: Request, res: Response) => {
+    try {
+        const loggedInUser = (req as any).user;
+        const { id } = req.params;
+
+        const userId =
+            req.path.includes('/me') || !id
+                ? Number(loggedInUser?.id)
+                : Number(id);
+
+        if (!userId || Number.isNaN(userId)) {
+            return res.status(400).json({ message: "Invalid employee id" });
+        }
+
+        const tenantId = loggedInUser?.tenantId;
+        if (!tenantId) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        // Find existing employee profile
+        const profile = await prisma.employeeProfile.findFirst({
+            where: {
+                userId,
+                tenantId,
+                isActive: true,
+                deletedAt: null,
+            }
+        });
+
+        if (!profile) {
+            return res.status(404).json({ message: "Employee profile not found" });
+        }
+
+        // Delete old profile picture if it exists on disk
+        if (profile.avatar && profile.avatar.startsWith('/uploads/')) {
+            const oldFilePath = path.join(process.cwd(), profile.avatar);
+            if (fs.existsSync(oldFilePath)) {
+                try {
+                    fs.unlinkSync(oldFilePath);
+                } catch (err) {
+                    console.error("Failed to delete old avatar file:", err);
+                }
+            }
+        }
+
+        const updatedProfile = await prisma.employeeProfile.update({
+            where: { id: profile.id },
+            data: { avatar: null }
+        });
+
+        return res.json(updatedProfile);
+    } catch (error: any) {
+        console.error("Delete profile picture error:", error);
+        return res.status(500).json({
+            message: "Server error",
+            error: error.message
+        });
     }
 };

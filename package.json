@@ -6,7 +6,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc",
     "start": "node dist/server.js",
-    "dev": "nodemon src/server.ts"
+    "dev": "nodemon --exec ts-node src/server.ts"
   },
   "repository": {
     "type": "git",
@@ -29,12 +29,16 @@
     "dotenv": "^17.2.3",
     "exceljs": "^3.4.0",
     "express": "^4.18.2",
+    "firebase": "^12.15.0",
+    "firebase-admin": "^14.1.0",
     "json2csv": "^6.0.0-alpha.2",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
-    "nodemailer": "^8.0.10",
+    "mysql2": "^3.23.2",
+    "nodemailer": "^9.0.1",
     "nodemon": "^3.0.3",
     "pdfkit": "^0.18.0",
+    "pip": "^0.0.1",
     "prisma": "^5.10.0",
     "status": "^0.0.6",
     "typescript": "^5.3.3"
@@ -45,7 +49,7 @@
     "@types/json2csv": "^5.0.7",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.1.0",
-    "@types/node": "^25.9.1",
+    "@types/node": "^25.9.4",
     "@types/nodemailer": "^8.0.0",
     "ts-node": "^10.9.2"
   },
