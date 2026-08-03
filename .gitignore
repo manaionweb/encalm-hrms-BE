@@ -37,3 +37,4 @@ coverage
 *.suo
 .DS_Store
 
+.firebase-service-account.json
